@@ -11,12 +11,14 @@ import { CreateQuoteDto } from './dto';
 import axios, { AxiosResponse } from 'axios';
 import { IHistoricalQuote } from './interface';
 import { IDeliveryDailyNSE } from 'src/companies/interface';
+import { NSEService } from 'src/companies/nse.service';
 
 @Injectable()
 export class QuotesService {
   constructor(
     @InjectModel(QUOTE_MODEL) private readonly quoteModel: IQuoteModel,
     private readonly companyService: CompaniesService,
+    private readonly nseService: NSEService,
   ) {}
 
   async sleep(ms) {
@@ -57,7 +59,7 @@ export class QuotesService {
     symbol: string,
     historicalDate: { fromDate: string; toDate: string },
   ): Promise<IHistoricalQuote> {
-    const { headers } = await this.companyService.getHeaders();
+    const { headers } = await this.nseService.getHeaders();
 
     const response = await axios({
       method: 'GET',
@@ -111,8 +113,8 @@ export class QuotesService {
             continue;
           }
 
-          const nseData = await this.companyService.getCompanyFromNSE(
-            this.companyService.sanitizeSymbol(company.symbol),
+          const nseData = await this.nseService.getCompanyFromNSE(
+            this.nseService.sanitizeSymbol(company.symbol),
           );
 
           if (nseData?.securityInfo?.tradingStatus == 'Suspended') {
@@ -124,10 +126,9 @@ export class QuotesService {
             nseData?.securityInfo &&
             nseData?.securityInfo.surveillance.surv == null
           ) {
-            deliveryData =
-              await this.companyService.getCompanyDailyDeliveryFromNSE(
-                this.companyService.sanitizeSymbol(company.symbol),
-              );
+            deliveryData = await this.nseService.getCompanyDailyDeliveryFromNSE(
+              this.nseService.sanitizeSymbol(company.symbol),
+            );
           }
 
           const dailyQuote: CreateQuoteDto = {
