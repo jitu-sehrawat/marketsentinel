@@ -131,10 +131,10 @@ export class QuotesService {
           const hasOHLC = await this.quoteModel.find({
             symbol: company.symbol,
             timestamp: {
-              $lt: new Date(
+              $gte: new Date(
                 `${format(datef, 'EEE, dd LLL yyyy')} 00:00:00 GMT`,
               ),
-              $gte: new Date(
+              $lt: new Date(
                 `${format(addDays(datef, 1), 'EEE, dd LLL yyyy')} 00:00:00 GMT`,
               ),
             },
@@ -185,7 +185,9 @@ export class QuotesService {
             vwap: nseData.priceInfo.vwap,
             timestamp:
               nseData.metadata.lastUpdateTime == '-'
-                ? new Date('Fri, 15 Sep 2023 00:00:00 GMT').toISOString()
+                ? new Date(
+                    `${format(datef, 'EEE, dd LLL yyyy')} 00:00:00 GMT`,
+                  ).toUTCString()
                 : nseData.metadata.lastUpdateTime,
           };
           // Save the quote details inside the collection
@@ -250,6 +252,9 @@ export class QuotesService {
   }
 
   async insertHistoricalJSONtoDB() {
+    // I have alerady added historical data till 15th september. Now only daily trade data will be stored.
+    // A new flow wil be made that will download data from nse for past1-2 week and then fill the gaps of daily quote sync
+    return true;
     try {
       let jsons;
       const companies = await this.companyService.getAll();
@@ -287,6 +292,28 @@ export class QuotesService {
       return true;
     } catch (error) {
       console.log(`Error: insertHistoricalJSONtoDB:`, error);
+      if (error.name === 'ValidationError') {
+        throw new BadRequestException(error.errors);
+      }
+
+      throw new ServiceUnavailableException();
+    }
+  }
+
+  async removedailyquotes() {
+    try {
+      const datef = toDate(new Date());
+      const hasOHLC = await this.quoteModel.deleteMany({
+        timestamp: {
+          $gte: new Date(`${format(datef, 'EEE, dd LLL yyyy')} 00:00:00 GMT`),
+          $lt: new Date(
+            `${format(addDays(datef, 1), 'EEE, dd LLL yyyy')} 00:00:00 GMT`,
+          ),
+        },
+      });
+
+      return hasOHLC;
+    } catch (error) {
       if (error.name === 'ValidationError') {
         throw new BadRequestException(error.errors);
       }

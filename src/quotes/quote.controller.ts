@@ -1,4 +1,4 @@
-import { Controller, Get } from '@nestjs/common';
+import { Controller, Delete, Get } from '@nestjs/common';
 import { QuotesService } from './quote.service';
 
 @Controller('/quotes')
@@ -18,5 +18,10 @@ export class QuotesController {
   @Get('insertHistoricalJSONtoDB')
   insertHistoricalJSONtoDB() {
     return this.quotesService.insertHistoricalJSONtoDB();
+  }
+
+  @Delete('removedailyquotes')
+  removedailyquotes() {
+    return this.quotesService.removedailyquotes();
   }
 }
