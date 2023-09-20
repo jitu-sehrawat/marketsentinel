@@ -1,14 +1,10 @@
+import { promises as fsPomise, existsSync } from 'fs';
+import * as fsxtra from 'fs-extra';
+import * as fs from 'fs';
+import * as path from 'path';
 import axios, { AxiosResponse } from 'axios';
-import {
-  BadRequestException,
-  ForbiddenException,
-  Injectable,
-  NotFoundException,
-  ServiceUnavailableException,
-} from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { COMPANY_MODEL, ICompanyModel } from 'src/schemas/company';
-import { CreateCompanyDto, UpdateCompanyDto } from './dto';
+import { toDate, getYear, lastDayOfMonth, addMonths } from 'date-fns';
+import { ForbiddenException, Injectable } from '@nestjs/common';
 import { ICompanyNSE, IDeliveryDailyNSE } from './interface';
 
 let HEADERS = {};
@@ -37,12 +33,55 @@ const flaggedSymbols = {
 export class NSEService {
   constructor() {}
 
+  async sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
   sanitizeSymbol(symbol) {
     if (flaggedSymbols.hasOwnProperty(symbol)) {
       return flaggedSymbols[symbol];
     }
 
     return symbol;
+  }
+
+  yearlyDateBuidler(listedDate) {
+    const listingDate = toDate(new Date(listedDate));
+    const listingYear = getYear(listingDate);
+    const today = toDate(new Date());
+    const curretYear = getYear(today);
+
+    const dateObjs = [];
+    for (let i = listingYear; i <= curretYear; i++) {
+      const monthFirstDay = [
+        new Date(i, 3, 1), // year, month, day
+        // new Date(i, 4, 1),
+        // new Date(i, 5, 1),
+        // new Date(i, 6, 1),
+        // new Date(i, 7, 1),
+        // new Date(i, 8, 1),
+        // new Date(i, 9, 1),
+        // new Date(i, 10, 1),
+        // new Date(i, 11, 1),
+        // new Date(i + 1, 0, 1),
+        // new Date(i + 1, 1, 1),
+        // new Date(i + 1, 2, 1),
+      ];
+      for (const firstDay of monthFirstDay) {
+        const fromDate = toDate(firstDay).toLocaleDateString('en-GB');
+        const tODate = lastDayOfMonth(
+          addMonths(firstDay, 11),
+        ).toLocaleDateString('en-GB');
+
+        if (new Date().getTime() > firstDay.getTime()) {
+          dateObjs.push({
+            fromDate: fromDate.replaceAll('/', '-'),
+            toDate: tODate.replaceAll('/', '-'),
+          });
+        }
+      }
+    }
+    return dateObjs;
   }
 
   async getHeaders() {
@@ -118,6 +157,184 @@ export class NSEService {
     });
 
     return response.data;
+  }
+
+  // HISTOICAL DATA
+  async getHistoricalCSVfromNSE(company) {
+    try {
+      const nseSymbol = this.sanitizeSymbol(company.symbol);
+      const historicalDates = await this.yearlyDateBuidler(company.listingDate);
+      if (await existsSync(`./src/csvs/${nseSymbol}`)) {
+        console.log(`Skipping ${nseSymbol}`);
+        return {
+          error: false,
+          data: null,
+        };
+      }
+      const { headers } = await this.getHeaders();
+
+      for (const historicalDate of historicalDates) {
+        const fromDate = historicalDate.fromDate;
+        const toDate = historicalDate.toDate;
+
+        const config = {
+          method: 'get',
+          maxBodyLength: Infinity,
+          // url: `https://www.nseindia.com/api/historical/securityArchives?from=01-04-2021&to=31-03-2022&symbol=INFY&dataType=priceVolumeDeliverable&series=ALL&csv=true`,
+          url: `https://www.nseindia.com/api/historical/securityArchives?from=${fromDate}&to=${toDate}&symbol=${nseSymbol}&dataType=priceVolumeDeliverable&series=ALL&&csv=true`,
+          headers: headers,
+        };
+        const response = await axios.request(config);
+        const dir = `./src/csvs/${nseSymbol}`;
+        await fsPomise.mkdir(dir, { recursive: true });
+        console.log(
+          `${company.symbol} listed on ${new Date(
+            company.listingDate,
+          ).toLocaleDateString()}, data from ${fromDate} to ${toDate}`,
+        );
+        fsPomise.writeFile(
+          `${dir}/${fromDate}to${toDate}.csv`,
+          response.data,
+          'utf8',
+        );
+      }
+
+      return {
+        error: false,
+        data: null,
+      };
+    } catch (error) {
+      console.log(`Error: getHistoricalCSVfromNSE: `, error);
+      return {
+        error: true,
+        data: null,
+      };
+    }
+  }
+
+  convertToNumber(data) {
+    const stripStrings = data.replaceAll(',', '');
+
+    if (isNaN(stripStrings)) {
+      return 0;
+    }
+
+    return parseFloat(stripStrings);
+  }
+
+  async formatOhlc(combinedOhlc) {
+    const formattedOhlc = [];
+    for (let ohlc of combinedOhlc) {
+      const record = {
+        symbol: ohlc['Symbol  '],
+        series: ohlc['Series  '],
+        open: this.convertToNumber(ohlc['Open Price  ']),
+        high: this.convertToNumber(ohlc['High Price  ']),
+        low: this.convertToNumber(ohlc['Low Price  ']),
+        close: this.convertToNumber(ohlc['Close Price  ']),
+        lastTradedPrice: this.convertToNumber(ohlc['Last Price  ']),
+        previousClosePrice: this.convertToNumber(ohlc['Prev Close  ']),
+        fiftyTwoWeekHighPrice: 0,
+        fiftyTwoWeekLowPrice: 0,
+        totalTradeQuantity: this.convertToNumber(
+          ohlc['Total Traded Quantity  '],
+        ),
+        totalTradeValue: this.convertToNumber(ohlc['Turnover ₹  ']),
+        totalTrade: this.convertToNumber(ohlc['No. of Trades  ']),
+        deliveryQuantity: this.convertToNumber(ohlc['Deliverable Qty  ']),
+        deliveryPercentage: this.convertToNumber(
+          ohlc['% Dly Qt to Traded Qty  '],
+        ),
+        vwap: 0,
+        timestamp: ohlc['Date  '],
+      };
+      // console.log(`record: `, record);
+      // process.exit()
+      formattedOhlc.push(record);
+    }
+
+    return formattedOhlc;
+  }
+
+  async convetCSVtoJSON(filepath) {
+    const result = [];
+    return new Promise((resolve, reject) => {
+      const fs = require('fs');
+      const Papa = require('papaparse');
+      const options = { header: true };
+
+      fs.createReadStream(filepath)
+        .pipe(Papa.parse(Papa.NODE_STREAM_INPUT, options))
+        .on('data', (data) => {
+          result.push(data);
+        })
+        .on('end', () => {
+          resolve(result);
+        })
+        .on('error', (error) => {
+          reject(Error);
+        });
+    });
+  }
+
+  async convertHistoricalCSVtoJSON() {
+    try {
+      const baseDir = path.resolve(process.cwd());
+      const csvDir = `${baseDir}/src/csvs`;
+      const jsonDir = `${baseDir}/src/jsons`;
+      const symbols = await fs.readdirSync(csvDir);
+      for (const symbol of symbols) {
+        const yearlyOhlc = await fs.readdirSync(`${csvDir}/${symbol}`);
+        const combinedOhlc = [];
+        for (const eachYearOhlc of yearlyOhlc) {
+          const data = await this.convetCSVtoJSON(
+            `${csvDir}/${symbol}/${eachYearOhlc}`,
+          );
+          const formattedData = await this.formatOhlc(data);
+          combinedOhlc.push(...formattedData);
+        }
+        console.log(`${symbol} combinedOhlc: `, ' ', combinedOhlc.length);
+        fs.writeFileSync(
+          `${jsonDir}/${symbol}.json`,
+          JSON.stringify(combinedOhlc),
+          { flag: 'w' },
+        );
+      }
+    } catch (error) {
+      console.log(`Error: convertS: `, error);
+    }
+  }
+
+  async readHistoricalJSON(nseSymbol) {
+    try {
+      const baseDir = path.resolve(process.cwd());
+      const jsonDir = `${baseDir}/src/jsons`;
+      const symbols = await fs.readdirSync(jsonDir);
+      const data = [];
+      for (const symbol of symbols) {
+        if (symbol.includes(nseSymbol)) {
+          // const jsonData = await fs.readFileSync(`${jsonDir}/${symbol}`);
+
+          const jsonData = await fsxtra.readJson(`${jsonDir}/${symbol}`);
+
+          data.push(...jsonData);
+        } else {
+          continue;
+        }
+      }
+
+      return {
+        error: false,
+        data: data,
+      };
+    } catch (error) {
+      console.log(`Error: readHistoricalJSON: `, error);
+      // throw new Error(`readHistoricalJSON: ${error}`);
+      return {
+        error: true,
+        data: null,
+      };
+    }
   }
 }
 

@@ -14,4 +14,9 @@ export class QuotesController {
   syncDailyQuotes() {
     return this.quotesService.syncDailyQuotes();
   }
+
+  @Get('insertHistoricalJSONtoDB')
+  insertHistoricalJSONtoDB() {
+    return this.quotesService.insertHistoricalJSONtoDB();
+  }
 }

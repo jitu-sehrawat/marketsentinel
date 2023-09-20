@@ -32,6 +32,32 @@ export class CompaniesService {
     }
   }
 
+  async getHistoricalData() {
+    try {
+      const companies = await this.companyModel.find();
+      let countrer = 0;
+      const response = {
+        successCount: 0,
+        failedCompanies: [],
+      };
+      for (const company of companies) {
+        // await this.nseService.sleep(1000);
+        const nseResponse =
+          await this.nseService.getHistoricalCSVfromNSE(company);
+
+        if (nseResponse.error) {
+          response.failedCompanies.push(company.symbol);
+        }
+
+        response.successCount = countrer++;
+      }
+
+      return response;
+    } catch (error) {
+      throw new ServiceUnavailableException();
+    }
+  }
+
   // sanitizeSymbol(symbol) {
   //   if (flaggedSymbols.hasOwnProperty(symbol)) {
   //     return flaggedSymbols[symbol];
@@ -225,5 +251,9 @@ export class CompaniesService {
 
       throw new ServiceUnavailableException();
     }
+  }
+
+  async convertCSVtoJSON() {
+    return this.nseService.convertHistoricalCSVtoJSON();
   }
 }

@@ -15,7 +15,7 @@ export class Quote {
   // @Prop({ type: Types.ObjectId, ref: USER_MODEL, required: true })
   // employer: Types.ObjectId | User;
 
-  @Prop({ required: true })
+  @Prop({ required: true, default: null })
   symbol: string;
 
   @Prop({ default: null })

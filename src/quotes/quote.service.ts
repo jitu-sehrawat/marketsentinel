@@ -12,6 +12,42 @@ import axios, { AxiosResponse } from 'axios';
 import { IHistoricalQuote } from './interface';
 import { IDeliveryDailyNSE } from 'src/companies/interface';
 import { NSEService } from 'src/companies/nse.service';
+import { addDays, format, isSaturday, isSunday, toDate } from 'date-fns';
+
+const monthMaps = {
+  Jan: 0,
+  Feb: 1,
+  Mar: 2,
+  Apr: 3,
+  May: 4,
+  Jun: 5,
+  Jul: 6,
+  Aug: 7,
+  Sep: 8,
+  Oct: 9,
+  Nov: 10,
+  Dec: 11,
+};
+
+const holidays = [
+  '9/19/2023',
+  '1/26/2023',
+  '3/7/2023',
+  '3/30/2023',
+  '4/4/2023',
+  '4/7/2023',
+  '4/14/2023',
+  '4/22/2023',
+  '5/1/2023',
+  '6/29/2023',
+  '8/15/2023',
+  '9/19/2023',
+  '10/2/2023',
+  '10/24/2023',
+  '11/14/2023',
+  '11/27/2023',
+  '12/25/2023',
+];
 
 @Injectable()
 export class QuotesService {
@@ -73,6 +109,16 @@ export class QuotesService {
   }
 
   async syncDailyQuotes() {
+    const datef = toDate(new Date());
+    if (
+      isSaturday(datef) ||
+      isSunday(datef) ||
+      holidays.indexOf(datef.toLocaleDateString()) > -1
+    ) {
+      return `Market is closed today. ${holidays.indexOf(
+        datef.toLocaleDateString(),
+      )}`;
+    }
     try {
       const syncedCompanies = [];
       const failedCompanies = [];
@@ -82,30 +128,15 @@ export class QuotesService {
       // Get nse daily data for the Company
       for (const company of companies) {
         try {
-          // const currentYear = new Date().getFullYear();
-          // const currentMonth =
-          //   new Date().getMonth() + 1 >= 10
-          //     ? `${new Date().getMonth() + 1}`
-          //     : `0${new Date().getMonth() + 1}`;
-          // const currentDay =
-          //   new Date().getDate() >= 10
-          //     ? new Date().getDate()
-          //     : `0${new Date().getDate()}`;
-          // const nseData = await this.getHistoricalQuotesFromNSE(
-          //   company.symbol,
-          //   {
-          //     // fromDate: `${currentDay}-${currentMonth}-${currentYear}`,
-          //     // toDate: `${currentDay}-${currentMonth}-${currentYear}`,
-          //     fromDate: `15-09-2023`,
-          //     toDate: `15-09-2023`,
-          //   },
-          // );
-
           const hasOHLC = await this.quoteModel.find({
             symbol: company.symbol,
             timestamp: {
-              $lt: new Date('Sat, 16 Sep 2023 00:00:00 GMT'),
-              $gte: new Date('Fri, 15 Sep 2023 00:00:00 GMT'),
+              $lt: new Date(
+                `${format(datef, 'EEE, dd LLL yyyy')} 00:00:00 GMT`,
+              ),
+              $gte: new Date(
+                `${format(addDays(datef, 1), 'EEE, dd LLL yyyy')} 00:00:00 GMT`,
+              ),
             },
           });
 
@@ -217,80 +248,50 @@ export class QuotesService {
       throw new ServiceUnavailableException();
     }
   }
+
+  async insertHistoricalJSONtoDB() {
+    try {
+      let jsons;
+      const companies = await this.companyService.getAll();
+      // const companies = await this.companyService.get('INFY');
+      for (const company of companies) {
+        const nseSymbol = this.nseService.sanitizeSymbol(company.symbol);
+        jsons = await this.nseService.readHistoricalJSON(nseSymbol);
+
+        let transformedOhlc = [];
+        for (const json of jsons.data) {
+          const day = json.timestamp.split('-')[0];
+          const month = monthMaps[json.timestamp.split('-')[1]];
+          const year = json.timestamp.split('-')[2];
+          const datef = toDate(new Date(year, month, day));
+
+          const ohlc = {
+            ...json,
+            symbol: nseSymbol,
+            timestamp: new Date(
+              `${format(datef, 'EEE, dd LLL yyyy')} 00:00:00 GMT`,
+            ),
+          };
+          transformedOhlc.push(ohlc);
+
+          if (transformedOhlc.length == 2500) {
+            await this.quoteModel.insertMany(transformedOhlc);
+            transformedOhlc = [];
+          }
+        }
+        await this.quoteModel.insertMany(transformedOhlc);
+
+        console.log(`ohlc inserted for ${nseSymbol}`);
+      }
+
+      return true;
+    } catch (error) {
+      console.log(`Error: insertHistoricalJSONtoDB:`, error);
+      if (error.name === 'ValidationError') {
+        throw new BadRequestException(error.errors);
+      }
+
+      throw new ServiceUnavailableException();
+    }
+  }
 }
-
-// async syncDailyQuotes() {
-//   try {
-//     const syncedCompanies = [];
-//     const failedCompanies = [];
-//     // Get List of all companies
-//     const companies = await this.companyService.getAll();
-//     // const companies = await this.companyService.get('INFY');
-//     // Get nse daily data for the Company
-//     for (const company of companies) {
-//       try {
-//         const currentYear = new Date().getFullYear();
-//         const currentMonth =
-//           new Date().getMonth() + 1 >= 10
-//             ? `${new Date().getMonth() + 1}`
-//             : `0${new Date().getMonth() + 1}`;
-//         const currentDay =
-//           new Date().getDate() >= 10
-//             ? new Date().getDate()
-//             : `0${new Date().getDate()}`;
-//         const nseData = await this.getHistoricalQuotesFromNSE(
-//           company.symbol,
-//           {
-//             // fromDate: `${currentDay}-${currentMonth}-${currentYear}`,
-//             // toDate: `${currentDay}-${currentMonth}-${currentYear}`,
-//             fromDate: `15-09-2023`,
-//             toDate: `15-09-2023`,
-//           },
-//         );
-
-//         const dailyQuote: CreateQuoteDto = {
-//           symbol: nseData.data[0].CH_SYMBOL,
-//           series: nseData.data[0].CH_SERIES,
-//           open: nseData.data[0].CH_OPENING_PRICE,
-//           high: nseData.data[0].CH_TRADE_HIGH_PRICE,
-//           low: nseData.data[0].CH_TRADE_LOW_PRICE,
-//           close: nseData.data[0].CH_CLOSING_PRICE,
-//           lastTradedPrice: nseData.data[0].CH_LAST_TRADED_PRICE,
-//           previousClosePrice: nseData.data[0].CH_PREVIOUS_CLS_PRICE,
-//           fiftyTwoWeekHighPrice: nseData.data[0].CH_52WEEK_HIGH_PRICE,
-//           fiftyTwoWeekLowPrice: nseData.data[0].CH_52WEEK_LOW_PRICE,
-//           totalTradeQuantity: nseData.data[0].CH_TOT_TRADED_QTY,
-//           totalTradeValue: nseData.data[0].CH_TOT_TRADED_VAL,
-//           totalTrade: nseData.data[0].CH_TOTAL_TRADES,
-//           deliveryQuantity: nseData.data[0].COP_DELIV_QTY,
-//           deliveryPercentage: nseData.data[0].COP_DELIV_QTY,
-//           vwap: nseData.data[0].VWAP,
-//           timestamp: nseData.data[0].TIMESTAMP,
-//         };
-//         // Save the quote details inside the collection
-//         await this.createQuote(dailyQuote);
-//         syncedCompanies.push(company.symbol);
-//         console.log(`${company.symbol} ohlc inserted`);
-
-//         // break;
-//       } catch (error) {
-//         console.log(`Error: syncDailyQuotes: ${company.symbol}: `, error);
-//         failedCompanies.push(company.symbol);
-//         // break;
-//       }
-
-//       if (syncedCompanies.length % 100 == 0) {
-//         console.log(`Sleeping for 2 mins===================================`);
-//         await this.sleep(1000 * 60 * 2);
-//       }
-//     }
-
-//     return { syncedCompanies, failedCompanies };
-//   } catch (error) {
-//     if (error.name === 'ValidationError') {
-//       throw new BadRequestException(error.errors);
-//     }
-
-//     throw new ServiceUnavailableException();
-//   }
-// }

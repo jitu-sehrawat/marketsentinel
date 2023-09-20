@@ -20,4 +20,14 @@ export class CompaniesController {
   create(@Body() createCompanyDto: CreateCompanyDto) {
     return this.companiesService.createCompany(createCompanyDto);
   }
+
+  @Get('/historicaldata')
+  getHistoricalData() {
+    return this.companiesService.getHistoricalData();
+  }
+
+  @Get('/convertCSVtoJSON')
+  getConvertCSVtoJSON() {
+    return this.companiesService.convertCSVtoJSON();
+  }
 }
