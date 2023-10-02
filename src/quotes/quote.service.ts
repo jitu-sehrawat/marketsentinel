@@ -12,7 +12,20 @@ import axios, { AxiosResponse } from 'axios';
 import { IHistoricalQuote } from './interface';
 import { IDeliveryDailyNSE } from 'src/companies/interface';
 import { NSEService } from 'src/companies/nse.service';
-import { addDays, format, isSaturday, isSunday, toDate } from 'date-fns';
+import {
+  addDays,
+  eachDayOfInterval,
+  format,
+  formatISO,
+  isSameDay,
+  isSaturday,
+  isSunday,
+  lastDayOfQuarter,
+  startOfQuarter,
+  subQuarters,
+  toDate,
+} from 'date-fns';
+import _ from 'lodash';
 
 const monthMaps = {
   Jan: 0,
@@ -59,6 +72,87 @@ export class QuotesService {
 
   async sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  private getPreviousQuarterStartDate() {
+    const currentQuarterFirstDate = startOfQuarter(new Date());
+    const previousQuaterFirstDate = subQuarters(currentQuarterFirstDate, 1);
+
+    return previousQuaterFirstDate;
+  }
+
+  private getWorkingDates(startDate, endDate = new Date()) {
+    const listOfDates = eachDayOfInterval({ start: startDate, end: endDate });
+    const formattedDates = [];
+    const removedWeekends = [];
+    const removedHolidays = [];
+    for (const date of listOfDates) {
+      formattedDates.push(`${format(date, 'yyyy-MM-dd')}`);
+    }
+
+    // Removing weekends
+    for (const date of listOfDates) {
+      if (isSaturday(date) || isSunday(date)) {
+        continue;
+      }
+
+      removedWeekends.push(date);
+    }
+
+    // Removing holidays
+    for (const date of removedWeekends) {
+      if (holidays.indexOf(date.toLocaleDateString()) > -1) {
+        continue;
+      }
+
+      removedHolidays.push(date);
+    }
+
+    return removedHolidays;
+  }
+
+  private getMissingQuotesDates(startDate, quotes) {
+    const workingDates = this.getWorkingDates(startDate);
+    const missingDates = [];
+
+    for (const date of workingDates) {
+      let found = false;
+      for (const index in quotes) {
+        if (isSameDay(quotes[index].timestamp, date)) {
+          found = true;
+          break;
+        }
+      }
+
+      if (!found) {
+        missingDates.push(format(date, 'dd-MM-yyyy'));
+      }
+    }
+    return missingDates;
+  }
+
+  private async transformCVStoJSON(ohlcCSV) {
+    const Papa = require('papaparse');
+    const jsonOHLC = await Papa.parse(ohlcCSV, { header: true });
+    return jsonOHLC.data;
+  }
+
+  private pickMissingOHLCs(ohlcs, missingDates) {
+    const missing = [];
+    for (const index in ohlcs) {
+      const day = ohlcs[index].timestamp.split('-')[0];
+      const month = monthMaps[ohlcs[index].timestamp.split('-')[1]];
+      const year = ohlcs[index].timestamp.split('-')[2];
+      const timestampDate = format(
+        toDate(new Date(year, month, day)),
+        'dd-MM-yyyy',
+      );
+      if (missingDates.indexOf(timestampDate) > -1) {
+        missing.push(ohlcs[index]);
+      }
+    }
+
+    return missing;
   }
 
   async getHeaders() {
@@ -314,6 +408,94 @@ export class QuotesService {
 
       return hasOHLC;
     } catch (error) {
+      if (error.name === 'ValidationError') {
+        throw new BadRequestException(error.errors);
+      }
+
+      throw new ServiceUnavailableException();
+    }
+  }
+
+  // Backing filling the last current and previous quater quotes from historical data
+  async backfillCurrentPreviousQuaterQuotes() {
+    try {
+      // Get all the companies
+      const companies = await this.companyService.getAll();
+      // const companies = await this.companyService.get('INFY');
+      for (const company of companies) {
+        const previousQuarterStartDate = toDate(
+          this.getPreviousQuarterStartDate(),
+        );
+        // Get all the quotes for current and previous quater from DB
+        const nseSymbol = this.nseService.sanitizeSymbol(company.symbol);
+        const quotes = await this.quoteModel.find({
+          symbol: nseSymbol,
+          timestamp: {
+            $gte: new Date(
+              `${format(
+                previousQuarterStartDate,
+                'EEE, dd LLL yyyy',
+              )} 00:00:00 GMT`,
+            ),
+          },
+        });
+
+        // Figure out the missing dates
+        const missingQuotesDates = this.getMissingQuotesDates(
+          previousQuarterStartDate,
+          quotes,
+        );
+        console.log(
+          `${company.symbol} missingQuotesDates: `,
+          missingQuotesDates,
+        );
+        if (missingQuotesDates.length == 0) {
+          continue;
+        }
+
+        // Download the current and previous quater from nse
+        const ohlcCSV = await this.nseService.nseHistoricalSecurityArchives(
+          format(previousQuarterStartDate, 'dd-MM-yyyy'),
+          format(new Date(), 'dd-MM-yyyy'),
+          company.symbol,
+        );
+        const jsonohlc = await this.transformCVStoJSON(ohlcCSV.data);
+
+        // Format the data
+        const formattedOHLC = await this.nseService.formatOhlc(jsonohlc);
+
+        // Pick the missing ohlc from current and privous quarter data
+        const missingOHLCs = await this.pickMissingOHLCs(
+          formattedOHLC,
+          missingQuotesDates,
+        );
+
+        // bulk Insert only the missing dates quote
+        const transformedOhlc = [];
+        for (const json of missingOHLCs) {
+          const day = json.timestamp.split('-')[0];
+          const month = monthMaps[json.timestamp.split('-')[1]];
+          const year = json.timestamp.split('-')[2];
+          const datef = toDate(new Date(year, month, day));
+
+          const ohlc = {
+            ...json,
+            symbol: nseSymbol,
+            timestamp: new Date(
+              `${format(datef, 'EEE, dd LLL yyyy')} 00:00:00 GMT`,
+            ),
+          };
+          transformedOhlc.push(ohlc);
+        }
+        await this.quoteModel.insertMany(transformedOhlc);
+        console.log(
+          `ohlc inserted for ${nseSymbol}::::::::${JSON.stringify(
+            transformedOhlc,
+          )}`,
+        );
+      }
+    } catch (error) {
+      console.log(`Error: backfillCurrentPreviousQuaterQuotes:`, error);
       if (error.name === 'ValidationError') {
         throw new BadRequestException(error.errors);
       }

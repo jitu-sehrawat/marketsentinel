@@ -24,4 +24,9 @@ export class QuotesController {
   removedailyquotes() {
     return this.quotesService.removedailyquotes();
   }
+
+  @Get('backfillCurrentPreviousQuater')
+  backfillCurrentPreviousQuaterQuotes() {
+    return this.quotesService.backfillCurrentPreviousQuaterQuotes();
+  }
 }
