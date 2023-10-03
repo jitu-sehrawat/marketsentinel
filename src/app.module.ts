@@ -6,6 +6,22 @@ import { JobsModule } from './jobs/jobs.module';
 import { MongooseModelsModule } from './schemas/mongoose-models.module';
 import { CompaniesModule } from './companies/company.module';
 import { QuotesModule } from './quotes/quote.module';
+import { AnalysisModule } from './analysis/analysis.module';
+import { SectorModule } from './analysis/sector/sector.module';
+import { RouterModule } from '@nestjs/core';
+
+const analysisRoutes = [
+  {
+    path: 'analysis',
+    module: AnalysisModule,
+    children: [
+      {
+        path: 'sector',
+        module: SectorModule,
+      },
+    ],
+  },
+];
 
 @Module({
   imports: [
@@ -16,6 +32,9 @@ import { QuotesModule } from './quotes/quote.module';
     JobsModule,
     CompaniesModule,
     QuotesModule,
+    AnalysisModule,
+    SectorModule,
+    RouterModule.register(analysisRoutes),
   ],
   controllers: [],
 })
