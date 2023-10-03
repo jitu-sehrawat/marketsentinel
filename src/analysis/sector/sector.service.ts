@@ -41,7 +41,7 @@ export class SectorService {
   }
 
   // List of companies for a sector type
-  async companiesBySectorType(sectorType: SECTOR_TYPE) {
+  private async companiesBySectorType(sectorType: SECTOR_TYPE) {
     const sectorsList = await this.listBySectorType(sectorType);
 
     const response = {};
@@ -69,10 +69,15 @@ export class SectorService {
       }
 
       const companies = await this.companyModel.find(query);
-
-      response[sector] = companies.map((company) => company.symbol);
+      response[sector] = companies;
     }
 
     return response;
+  }
+
+  async companiesGroupedBySectorType(sectorType: SECTOR_TYPE) {
+    const data = await this.companiesBySectorType(sectorType);
+
+    return data;
   }
 }

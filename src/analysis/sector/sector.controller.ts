@@ -23,6 +23,6 @@ export class SectorController {
 
   @Get('companies')
   companiesBySectorType(@Body() body: SectorTypeDTO) {
-    return this.sectorService.companiesBySectorType(body.sectorType);
+    return this.sectorService.companiesGroupedBySectorType(body.sectorType);
   }
 }
