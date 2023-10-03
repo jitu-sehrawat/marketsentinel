@@ -25,4 +25,9 @@ export class SectorController {
   companiesBySectorType(@Body() body: SectorTypeDTO) {
     return this.sectorService.companiesGroupedBySectorType(body.sectorType);
   }
+
+  @Get('indicies')
+  indicesGroupBySectorType(@Body() body: SectorTypeDTO) {
+    return this.sectorService.indicesGroupBySectorType(body.sectorType);
+  }
 }

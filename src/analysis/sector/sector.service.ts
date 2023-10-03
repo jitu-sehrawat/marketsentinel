@@ -9,37 +9,6 @@ export class SectorService {
     @InjectModel(COMPANY_MODEL) private readonly companyModel: ICompanyModel,
   ) {}
 
-  // List all the sectors groups by categorisation
-  async listSectors() {
-    const list = await this.companyModel.aggregate([
-      {
-        $group: {
-          _id: null,
-          sector: {
-            $addToSet: '$industryInfo.sector',
-          },
-          macro: {
-            $addToSet: '$industryInfo.macro',
-          },
-          industry: {
-            $addToSet: '$industryInfo.industry',
-          },
-          basicIndustry: {
-            $addToSet: '$industryInfo.basicIndustry',
-          },
-        },
-      },
-    ]);
-
-    return list[0];
-  }
-
-  // List by sector type
-  async listBySectorType(sectorType: SECTOR_TYPE) {
-    const listSectors = await this.listSectors();
-    return listSectors[sectorType];
-  }
-
   // List of companies for a sector type
   private async companiesBySectorType(sectorType: SECTOR_TYPE) {
     const sectorsList = await this.listBySectorType(sectorType);
@@ -75,9 +44,71 @@ export class SectorService {
     return response;
   }
 
-  async companiesGroupedBySectorType(sectorType: SECTOR_TYPE) {
-    const data = await this.companiesBySectorType(sectorType);
+  // Join all the  symbols to form a indice capabile in tradingview
+  private buildIndices(symbols: string[]) {
+    let index = '';
 
-    return data;
+    for (const symbol of symbols) {
+      index = index + `NSE:${symbol}+`;
+    }
+
+    return index.slice(0, index.length - 1);
   }
+
+  // Routes
+  // List all the sectors groups by categorisation
+  async listSectors() {
+    const list = await this.companyModel.aggregate([
+      {
+        $group: {
+          _id: null,
+          sector: {
+            $addToSet: '$industryInfo.sector',
+          },
+          macro: {
+            $addToSet: '$industryInfo.macro',
+          },
+          industry: {
+            $addToSet: '$industryInfo.industry',
+          },
+          basicIndustry: {
+            $addToSet: '$industryInfo.basicIndustry',
+          },
+        },
+      },
+    ]);
+
+    return list[0];
+  }
+
+  // List by sector type
+  async listBySectorType(sectorType: SECTOR_TYPE) {
+    const listSectors = await this.listSectors();
+    return listSectors[sectorType];
+  }
+
+  // Return companies symbol only grouped by sector type
+  async companiesGroupedBySectorType(sectorType: SECTOR_TYPE) {
+    const records = await this.companiesBySectorType(sectorType);
+
+    const response = {};
+    for (const sector in records) {
+      response[sector] = records[sector].map((company) => company.symbol);
+    }
+
+    return response;
+  }
+
+  async indicesGroupBySectorType(sectorType: SECTOR_TYPE) {
+    const records = await this.companiesBySectorType(sectorType);
+
+    const response = {};
+    for (const sector in records) {
+      const symbols = records[sector].map((company) => company.symbol);
+      response[sector] = this.buildIndices(symbols);
+    }
+
+    return response;
+  }
+  // Routes
 }
