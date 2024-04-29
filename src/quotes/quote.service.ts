@@ -443,9 +443,14 @@ export class QuotesService {
           previousQuarterStartDate,
           quotes,
         );
+        // console.log(
+        //   `${company.symbol} missingQuotesDates: `,
+        //   missingQuotesDates,
+        // );
+
         console.log(
           `${company.symbol} missingQuotesDates: `,
-          missingQuotesDates,
+          missingQuotesDates.length,
         );
         if (missingQuotesDates.length == 0) {
           continue;
@@ -486,11 +491,12 @@ export class QuotesService {
           transformedOhlc.push(ohlc);
         }
         await this.quoteModel.insertMany(transformedOhlc);
-        console.log(
-          `ohlc inserted for ${nseSymbol}::::::::${JSON.stringify(
-            transformedOhlc,
-          )}`,
-        );
+        // console.log(
+        //   `ohlc inserted for ${nseSymbol}::::::::${JSON.stringify(
+        //     transformedOhlc,
+        //   )}`,
+        // );
+        console.log(`ohlc inserted for ${nseSymbol}`);
       }
     } catch (error) {
       console.log(`Error: backfillCurrentPreviousQuaterQuotes:`, error);
